@@ -34,8 +34,8 @@ def check_and_install_requirements():
                 importlib.import_module("google.generativeai")
             elif package == "fake_useragent":
                 importlib.import_module("fake_useragent")
-            elif package == colorama:
-                importlib.import_module("colorama") # Fixed: colorama added
+            elif package == "colorama": 
+                importlib.import_module("colorama")
             elif package == "psutil":
                 importlib.import_module("psutil")
             elif package == "schedule":
@@ -1450,3 +1450,4 @@ async def selfbot():
             await asyncio.sleep(10)  # Wait before retrying
 
 asyncio.run(selfbot())
+
