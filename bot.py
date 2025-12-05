@@ -632,14 +632,6 @@ class SmartBreakTimer:
         if user_id in self.active_conversations:
             conv = self.active_conversations[user_id]
             
-            # 🛑 FIX: Check if the bot has already replied twice (message count >= 2)
-            # Message count 1 means: Bot sent 1st reply. Message count 2 means: Bot sent 2nd reply.
-            if conv['message_count'] >= 2:
-                # Force expiration after 2 replies (the 3rd reply is blocked below)
-                self.active_conversations[user_id]['last_message_time'] = 0 
-                print_status(f"🚫 Conversation limit reached with {username}. Limiting to 2 bot replies.", 'warning')
-                return False # Do not continue the conversation
-
             current_time = time.time()
             conv['last_message_time'] = current_time
             conv['message_count'] += 1
@@ -662,11 +654,7 @@ class SmartBreakTimer:
             del self.active_conversations[user_id]
             print_status(f"⏰ Conversation with {conv['username']} expired (5 min timeout)", 'warning')
             return False
-            
-        # Check if limit has been reached (message_count >= 2 means the user is waiting for the 3rd reply)
-        if conv['message_count'] >= 2:
-            return False
-        
+                     
         return True
     
     def cleanup_expired_conversations(self):
@@ -1450,4 +1438,5 @@ async def selfbot():
             await asyncio.sleep(10)  # Wait before retrying
 
 asyncio.run(selfbot())
+
 
