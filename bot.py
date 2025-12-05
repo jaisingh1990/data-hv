@@ -195,7 +195,7 @@ HEADERS = {
 
 # Gemini AI Configuration
 palm.configure(api_key=GEMINI_API_KEY)
-model = palm.GenerativeModel("gemini-1.5-flash")
+model = palm.GenerativeModel("gemini-2.5-flash")
 
 # Language Detection Function
 def detect_language(text):
@@ -1414,3 +1414,4 @@ async def selfbot():
             await asyncio.sleep(10)  # Wait before retrying
 
 asyncio.run(selfbot())
+
