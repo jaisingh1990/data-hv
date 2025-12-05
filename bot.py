@@ -34,12 +34,6 @@ def check_and_install_requirements():
                 importlib.import_module("google.generativeai")
             elif package == "fake_useragent":
                 importlib.import_module("fake_useragent")
-            elif package == "colorama": 
-                importlib.import_module("colorama")
-            elif package == "psutil":
-                importlib.import_module("psutil")
-            elif package == "schedule":
-                importlib.import_module("schedule")
             elif package == "dateutil":
                 importlib.import_module("dateutil")
             else:
@@ -309,7 +303,7 @@ def get_gemini_response(prompt, detected_lang, message_type='general'):
         }
         
         # 2. Add the Indian persona instruction here:
-        base_identity = "You are a friendly, enthusiastic, and helpful human community member on Discord. You live in a major city in Maharashtra, India. Do not reveal that you are an AI model."
+        # NOTE: The main prompt must override the standard 'You are a helpful Discord user.' base identity
         
         # Set detected_lang to 'en' to use the English-only instruction
         detected_lang = 'en'
@@ -370,7 +364,8 @@ def get_gemini_response(prompt, detected_lang, message_type='general'):
         human_instruction = random.choice(human_variations)
         
         # 🇮🇳 CONSTRUCT THE FINAL, OVERRIDING PROMPT HERE
-        # This prompt tells the AI its identity, language, and length constraints.
+        base_identity = "You are a friendly, enthusiastic, and helpful human community member on Discord. You live in a major city in Maharashtra, India. Do not reveal that you are an AI model."
+        
         full_prompt = f"{base_identity}\n" \
                       f"{lang_instructions.get('en')}\n" \
                       f"{template}\n{human_instruction}\n\n{prompt}"
@@ -625,14 +620,10 @@ class SmartBreakTimer:
         print_status(f"💬 Started conversation with {username}", 'info')
     
     def continue_conversation(self, user_id, username):
-        """
-        Continue an existing conversation. 
-        Returns False if the 2-reply limit is reached.
-        """
+        """Continue an existing conversation"""
         if user_id in self.active_conversations:
-            conv = self.active_conversations[user_id]
-            
             current_time = time.time()
+            conv = self.active_conversations[user_id]
             conv['last_message_time'] = current_time
             conv['message_count'] += 1
             self.enforce_capacity()
@@ -641,7 +632,7 @@ class SmartBreakTimer:
         return False
     
     def can_continue_conversation(self, user_id):
-        """Check if we can continue conversation (within 5 minute timeout and before limit)"""
+        """Check if we can continue conversation (within 5 minute timeout)"""
         if user_id not in self.active_conversations:
             return False
         
@@ -654,7 +645,7 @@ class SmartBreakTimer:
             del self.active_conversations[user_id]
             print_status(f"⏰ Conversation with {conv['username']} expired (5 min timeout)", 'warning')
             return False
-                     
+        
         return True
     
     def cleanup_expired_conversations(self):
@@ -1258,7 +1249,6 @@ async def selfbot():
             new_msgs = []
             for msg in messages[:20]:
                 user_id = msg.get('author', {}).get('id')
-                # FIX 3: Ensure we only check can_continue_conversation if the conversation isn't already marked as limited
                 if smart_timer.can_continue_conversation(user_id):
                     convo_msgs.append(msg)
                 else:
@@ -1326,14 +1316,10 @@ async def selfbot():
                     should_respond = False
                     message_type = 'general'
 
-                    # CHECK 1: CONVERSATION CONTINUATION (Now includes the 2-reply limit)
                     if smart_timer.can_continue_conversation(user_id):
-                        if smart_timer.continue_conversation(user_id, username):
-                             should_respond = True
-                             message_type = 'conversation'
-                        # else: Limit reached, skip to other checks if needed, but we rely on can_continue_conversation to filter this out now
-
-                    # CHECK 2: REPLY TO OTHERS / QUESTIONS / GENERAL
+                        should_respond = True
+                        message_type = 'conversation'
+                        smart_timer.continue_conversation(user_id, username)
                     elif not should_respond:
                         referenced_message = msg.get('referenced_message')
                         if referenced_message and referenced_message.get('author', {}).get('id') != bot_user_id:
@@ -1438,5 +1424,3 @@ async def selfbot():
             await asyncio.sleep(10)  # Wait before retrying
 
 asyncio.run(selfbot())
-
-
