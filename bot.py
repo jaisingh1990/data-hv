@@ -3,6 +3,7 @@ import sys
 import subprocess
 import importlib
 import json
+import requests # Need to import requests here for the fix to work in the main loop
 
 # Auto-requirements checker
 def check_and_install_requirements():
@@ -56,7 +57,7 @@ def check_and_install_requirements():
             except subprocess.CalledProcessError:
                 print(f"❌ Failed to install {package}")
                 return False
-        
+            
         print("🎉 All packages installed! Restarting bot...")
         print("=" * 50)
         return True
@@ -204,16 +205,17 @@ def detect_language(text):
     except:
         return 'en'  # Default to English if detection fails
 
+# GET_RANDOM_EMOJIS FUNCTION IS NO LONGER USED, BUT WE KEEP IT FOR COMPATIBILITY
 # Get Random Emojis based on message sentiment
 def get_random_emojis(count=2, sentiment='happy'):
     emoji_map = {
         'happy': [':grinning_face:', ':beaming_face_with_smiling_eyes:', ':face_with_tears_of_joy:', 
-                 ':smiling_face_with_hearts:', ':star-struck:', ':face_blowing_a_kiss:', 
-                 ':smiling_face_with_heart-eyes:', ':winking_face:', ':partying_face:'],
+                  ':smiling_face_with_hearts:', ':star-struck:', ':face_blowing_a_kiss:', 
+                  ':smiling_face_with_heart-eyes:', ':winking_face:', ':partying_face:'],
         'thinking': [':thinking_face:', ':face_with_monocle:', ':face_with_raised_eyebrow:', 
-                    ':face_with_hand_over_mouth:', ':nerd_face:', ':face_with_hand_over_mouth:'],
+                     ':face_with_hand_over_mouth:', ':nerd_face:', ':face_with_hand_over_mouth:'],
         'helpful': [':thumbs_up:', ':OK_hand:', ':raising_hands:', ':folded_hands:', 
-                   ':sparkles:', ':light_bulb:', ':check_mark:', ':rocket:'],
+                    ':sparkles:', ':light_bulb:', ':check_mark:', ':rocket:'],
         'sympathetic': [':slightly_smiling_face:', ':hugging_face:', ':relieved_face:', ':heart:', ':pray:'],
         'confused': [':confused_face:', ':thinking_face:', ':face_with_raised_eyebrow:', ':face_with_monocle:'],
         'excited': [':partying_face:', ':star-struck:', ':face_with_cowboy_hat:', ':fire:', ':zap:'],
@@ -221,7 +223,8 @@ def get_random_emojis(count=2, sentiment='happy'):
     }
     emojis = emoji_map.get(sentiment, emoji_map['happy'])
     selected = random.sample(emojis, min(count, len(emojis)))
-    return ' '.join(emojize(emoji) for emoji in selected)
+    # We return raw string, the main function handles the emoji removal now
+    return ' '.join(emojize(emoji) for emoji in selected) 
 
 
 # Rate limiting for API calls
@@ -293,30 +296,24 @@ def get_gemini_response(prompt, detected_lang, message_type='general'):
         if not ai_rate_limiter.can_make_request():
             return "Rate limit exceeded. Please try again later."
 
-        # Enhanced language and context instructions with emphasis on brevity
+        # === START MODIFICATION FOR ENGLISH-ONLY AND NO EMOJI ===
+        # 1. Force English language instruction regardless of detected_lang
         lang_instructions = {
-            'hi': 'Reply in Hindi language with 1-2 friendly sentences.',
-            'en': 'Reply in English language with 1-2 friendly sentences.',
-            'es': 'Reply in Spanish language with 1-2 friendly sentences.',
-            'fr': 'Reply in French language with 1-2 friendly sentences.',
-            'de': 'Reply in German language with 1-2 friendly sentences.',
-            'ja': 'Reply in Japanese language with 1-2 friendly sentences.',
-            'ko': 'Reply in Korean language with 1-2 friendly sentences.',
-            'ar': 'Reply in Arabic language with 1-2 friendly sentences.',
-            'ru': 'Reply in Russian language with 1-2 friendly sentences.',
-            'zh': 'Reply in Chinese language with 1-2 friendly sentences.'
+            'en': 'Reply only in English language with 1-2 friendly sentences. Do not use any emojis in the response.'
         }
+        # 2. Set detected_lang to 'en' to use the English-only instruction
+        detected_lang = 'en'
         
-        # Response templates based on message type
+        # Original templates (we rely on the prompt to override them)
         templates = {
             'general': ['Keep the response natural and conversational.',
-                       'Add some personality to the response.',
-                       'Make the response engaging but concise.',
-                       'Be friendly and approachable.'],
+                        'Add some personality to the response.',
+                        'Make the response engaging but concise.',
+                        'Be friendly and approachable.'],
             'question': ['Provide a helpful and clear answer.',
-                        'Be informative but keep it simple.',
-                        'Answer directly with a friendly tone.',
-                        'Give practical and actionable advice.'],
+                         'Be informative but keep it simple.',
+                         'Answer directly with a friendly tone.',
+                         'Give practical and actionable advice.'],
             'help': ['Offer assistance in a supportive way.',
                      'Be encouraging and helpful.',
                      'Provide guidance with a positive tone.',
@@ -326,25 +323,22 @@ def get_gemini_response(prompt, detected_lang, message_type='general'):
                       'Keep the conversation flowing smoothly.',
                       'Build on the previous message naturally.'],
             'casual': ['Keep it casual and friendly like talking to a friend.',
-                      'Use simple, everyday language.',
-                      'Be relaxed and informal.'],
+                       'Use simple, everyday language.',
+                       'Be relaxed and informal.'],
             'professional': ['Keep it professional but warm.',
-                           'Be helpful and informative.',
-                           'Maintain a helpful tone.'],
+                             'Be helpful and informative.',
+                             'Maintain a helpful tone.'],
             'funny': ['Make the response humorous and entertaining.',
-                     'Add some jokes or witty remarks.',
-                     'Keep it light and fun.']
+                      'Add some jokes or witty remarks.',
+                      'Keep it light and fun.']
         }
         
-        # Get current pattern safely (fallback if smart_timer not available)
         try:
             current_pattern = smart_timer.get_current_pattern()
         except:
             current_pattern = 'general'
-        
-        # Select template based on current pattern
+            
         if current_pattern == 'quiet':
-            # Quiet mode - minimal responses
             template = "Keep response very short and simple."
         elif current_pattern == 'casual':
             template = random.choice(templates.get('casual', templates['general']))
@@ -355,7 +349,6 @@ def get_gemini_response(prompt, detected_lang, message_type='general'):
         else:
             template = random.choice(templates.get(message_type, templates['general']))
         
-        # Add human-like variations to prompt
         human_variations = [
             "Make it sound like a real person typing, not a bot.",
             "Use casual, everyday language like a friend would.",
@@ -366,71 +359,41 @@ def get_gemini_response(prompt, detected_lang, message_type='general'):
         ]
         human_instruction = random.choice(human_variations)
         
-        full_prompt = f"{lang_instructions.get(detected_lang, 'Reply with 1-2 friendly sentences.')}\n" \
-                     f"{template}\n{human_instruction}\n\n{prompt}"
+        # Build the final prompt with strict English-only instruction
+        full_prompt = f"{lang_instructions.get('en')}\n" \
+                      f"{template}\n{human_instruction}\n\n{prompt}"
+        # === END MODIFICATION FOR ENGLISH-ONLY ===
         
         response = model.generate_content(full_prompt)
         response_text = response.text.strip()
         
-        # Remove greeting openings to avoid bot-like starts
+        # === START MODIFICATION FOR EMOJI REMOVAL AND POST-PROCESSING ===
+        # Ensure no emojization happens by resetting the emoji-related post-processing.
+        
+        # Remove greeting openings (Original Logic)
         lowered = response_text.lower().lstrip()
         for greet in ["hey", "hi", "hello", "hey there", "hi there", "hello there"]:
             if lowered.startswith(greet):
-                # Remove the greeting word and following punctuation/space
                 parts = response_text.split(' ', 1)
                 if len(parts) == 2:
                     response_text = parts[1].lstrip("-,.!:; ")
                 else:
-                    # If only greeting, keep it minimal
                     response_text = response_text.lstrip("-,.!:; ")
                 break
         
-        # Control response length to avoid Discord issues
+        # Control response length (Original Logic)
         if len(response_text) > 200:
             response_text = response_text[:200] + "..."
         
-        # Add human-like variations (sometimes add typos, casual language)
+        # Add human-like variations (Original Logic)
         if random.random() < 0.2:  # 20% chance
             response_text = response_text.replace('.', '...').replace('!', '!!')
+            
+        # The entire logic for `emoji_count`, `get_random_emojis`, and emoji placement
+        # is effectively overridden by simply returning the response text here:
+        return response_text
+        # === END MODIFICATION FOR EMOJI REMOVAL ===
         
-        # Randomly decide emoji placement and count (more human-like)
-        emoji_count = random.randint(0, 2)  # Sometimes no emojis
-        if emoji_count > 0:
-            emojis = get_random_emojis(count=emoji_count, sentiment=message_type)
-        else:
-            emojis = ""
-        
-        # Emoji placement: no prefix; prefer suffix or inline by keyword
-        if not emojis:
-            return response_text
-        
-        # Try simple inline placement after a relevant keyword
-        keywords_map = {
-            'happy': ["great", "awesome", "amazing", "good", "nice"],
-            'helpful': ["help", "fix", "try", "steps", "idea"],
-            'thinking': ["think", "maybe", "perhaps", "consider"],
-            'sympathetic': ["sorry", "understand", "feel", "hope"],
-            'confused': ["confused", "unsure", "hmm"],
-            'excited': ["wow", "cool", "excited", "love"],
-            'supportive': ["you can", "go ahead", "good luck", "nice work"]
-        }
-        placed = False
-        try:
-            words = response_text.split()
-            targets = keywords_map.get(message_type, [])
-            for i, w in enumerate(words):
-                lw = w.strip(',.!?').lower()
-                if any(t == lw or t in lw for t in targets):
-                    words[i] = f"{w} {emojis}"
-                    placed = True
-                    break
-            if placed:
-                return " ".join(words)
-        except Exception:
-            placed = False
-        
-        # Fallback: suffix placement only
-        return f"{response_text} {emojis}"
     except Exception as e:
         # On rate limits or key-related errors, rotate key and retry once
         err_text = str(e).lower()
@@ -457,7 +420,7 @@ def get_gemini_response(prompt, detected_lang, message_type='general'):
                 try:
                     response = model.generate_content(full_prompt)
                     response_text = response.text.strip()
-                    # Re-apply post-processing
+                    # Re-apply post-processing (simplified for English/No Emoji)
                     lowered = response_text.lower().lstrip()
                     for greet in ["hey", "hi", "hello", "hey there", "hi there", "hello there"]:
                         if lowered.startswith(greet):
@@ -471,12 +434,8 @@ def get_gemini_response(prompt, detected_lang, message_type='general'):
                         response_text = response_text[:200] + "..."
                     if random.random() < 0.2:
                         response_text = response_text.replace('.', '...').replace('!', '!!')
-                    emoji_count = random.randint(0, 2)
-                    emojis = get_random_emojis(count=emoji_count, sentiment=message_type) if emoji_count > 0 else ""
-                    if emojis:
-                        # suffix only on retry
-                        return f"{response_text} {emojis}"
-                    return response_text
+                    # RETURN WITHOUT EMOJIS
+                    return response_text 
                 except Exception as e2:
                     return f"AI Error: {e2}"
         return f"AI Error: {e}"
@@ -844,7 +803,7 @@ async def fetch_channel_messages(channel_id, limit=20):
             else:
                 print_status(f"❌ HTTP Error {response.status_code}: {response.text}", 'error')
                 error_handler.handle_error(Exception(f"HTTP {response.status_code}"), 
-                                       f"Channel {channel_id}", "fetch_messages")
+                                           f"Channel {channel_id}", "fetch_messages")
                 
         except requests.exceptions.Timeout:
             print_status("⏱️ Request timeout. Retrying...", 'warning')
@@ -937,7 +896,7 @@ class BotDashboard:
         print("=" * max(80, len(header)))
         
         print("╔══════════════════════════════════════════════════════════════════════════════╗")
-        print("║                        🤖 ADVANCED DISCORD BOT DASHBOARD                    ║")
+        print("║                                🤖 ADVANCED DISCORD BOT DASHBOARD             ║")
         print("╠══════════════════════════════════════════════════════════════════════════════╣")
         print(f"║ Status: {self.status:<65} ║")
         print(f"║ Uptime: {uptime:.1f} hours{' ' * 55} ║")
@@ -1013,7 +972,9 @@ class ConfigManager:
             "response_patterns": ["casual", "professional", "funny", "helpful", "quiet"],
             "webhook_url": "",
             "owner_id": "",
-            "gemini_api_keys": [] # Added for multiple API keys
+            "gemini_api_keys": [], # Added for multiple API keys
+            # ADDED: List of usernames to ignore for auto-reply
+            "ignored_usernames": ["Skbindas", "abhi6753"] 
         }
         self.load(force=True)
     
@@ -1026,7 +987,10 @@ class ConfigManager:
                 with open(self.path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                     if isinstance(data, dict):
+                        # Use .get() to safely update and keep existing keys if not in file
                         self.config.update(data)
+                        # Ensure lists are updated, not replaced by missing keys
+                        self.config["ignored_usernames"] = data.get("ignored_usernames", self.config["ignored_usernames"])
                         self.last_mtime = mtime
                         print_status("🔁 Config loaded", 'info')
         except Exception as e:
@@ -1047,6 +1011,11 @@ class ConfigManager:
     def get_cooldown_range(self):
         cd = self.config.get("cooldown_seconds", {})
         return int(cd.get("min", 60)), int(cd.get("max", 120))
+    
+    # NEW FUNCTION: Get list of usernames to ignore
+    def get_ignored_usernames(self):
+        return self.config.get("ignored_usernames", [])
+
 
 # Initialize config
 config_manager = ConfigManager()
@@ -1073,7 +1042,8 @@ def validate_startup():
 
     # Check Gemini reachable (best-effort)
     try:
-        _ = model.generate_content("ping")
+        # Note: We are using the global 'model' defined above
+        _ = model.generate_content("ping") 
     except Exception as e:
         err = str(e).lower()
         # If it's a rate-limit/quota error, warn but don't block startup
@@ -1160,6 +1130,9 @@ async def selfbot():
     BOT_OWNER_ID = os.getenv("BOT_OWNER_ID", "")
     BOT_PAUSED = False
     CURRENT_MODE = "casual"
+    
+    # Load ignored usernames from config
+    IGNORED_USERS = config_manager.get_ignored_usernames() 
 
     while True:
         try:
@@ -1171,6 +1144,8 @@ async def selfbot():
             CURRENT_MODE = config_manager.get_mode()
             CHANNEL_SLOW_MODES[channel_id] = config_manager.get_slowmode(channel_id)
             cd_min, cd_max = config_manager.get_cooldown_range()
+            # Update IGNORED_USERS list dynamically
+            IGNORED_USERS = config_manager.get_ignored_usernames()
             
             # Check if we should take a break (anti-ban)
             should_break, break_reason = smart_timer.should_take_break()
@@ -1193,7 +1168,7 @@ async def selfbot():
                 # Force refresh messages after break
                 print_status("🔄 Refreshing messages after break...", 'info')
                 continue  # Skip to next iteration to process messages immediately
-            
+                
             # Check if we should rotate channels
             if smart_timer.should_rotate_channel():
                 new_channel = smart_timer.get_next_channel()
@@ -1297,6 +1272,21 @@ async def selfbot():
                     mentions = msg.get("mentions", [])
                     is_reply = msg.get("referenced_message") is not None
                     bot_user_id = DISCORD_TOKEN.split(".")[0] if DISCORD_TOKEN and '.' in DISCORD_TOKEN else None
+                    
+                    # === START NEW LOGIC FOR IGNORING USERS AND SELF-REPLY ===
+                    user_id = msg.get('author', {}).get('id')
+                    username = msg.get('author', {}).get('abhi$', 'Unknown')
+                    
+                    # 1. Ignore the Bot's Own Messages (Prevents infinite loops)
+                    if user_id == bot_user_id:
+                        continue
+                        
+                    # 2. Ignore Specific Users by Username
+                    if username in IGNORED_USERS:
+                        print_status(f"🚫 Ignoring message from specified user: {username}", 'info')
+                        continue
+                    # === END NEW LOGIC ===
+                    
                     try:
                         timestamp = msg.get('timestamp', '')
                         if not timestamp:
@@ -1304,16 +1294,13 @@ async def selfbot():
                         message_time = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
                         message_timestamp = message_time.timestamp()
                         if (author == "Unknown" or 
-                            time.time() - message_timestamp > 120 or
-                            msg.get('author', {}).get('id') == bot_user_id):
+                            time.time() - message_timestamp > 120): # Only process recent messages
                             continue
                     except Exception:
                         continue
                     content_lower = content.lower()
                     should_respond = False
                     message_type = 'general'
-                    user_id = msg.get('author', {}).get('id')
-                    username = msg.get('author', {}).get('username', 'Unknown')
 
                     if smart_timer.can_continue_conversation(user_id):
                         should_respond = True
@@ -1365,7 +1352,8 @@ async def selfbot():
                         retry_count = 0
                         while retry_count < max_retries:
                             try:
-                                detected_lang = detect_language(content)
+                                # We already enforce English-only reply in get_gemini_response
+                                detected_lang = detect_language(content) 
                                 prompt = f"You are a helpful Discord user. Reply to this message naturally and appropriately:\n{context}"
                                 ai_response = get_gemini_response(prompt, detected_lang, message_type)
                                 if ai_response and not ai_response.startswith(("AI Error", "Rate limit")):
@@ -1404,7 +1392,7 @@ async def selfbot():
             await asyncio.sleep(CHANNEL_SLOW_MODES[channel_id])
             
             # Wait before next refresh with progress indicator
-            for i in range(10, 0, -1):
+            for i in range(CHANNEL_SLOW_MODES[channel_id], 0, -1):
                 print(f"\r{Fore.CYAN}⏳ Refreshing in {i} seconds...{Style.RESET_ALL}", end='')
                 await asyncio.sleep(1)
             print()  # New line after countdown
@@ -1414,4 +1402,3 @@ async def selfbot():
             await asyncio.sleep(10)  # Wait before retrying
 
 asyncio.run(selfbot())
-
