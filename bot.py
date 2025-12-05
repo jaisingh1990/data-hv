@@ -974,7 +974,7 @@ class ConfigManager:
             "owner_id": "",
             "gemini_api_keys": [], # Added for multiple API keys
             # ADDED: List of usernames to ignore for auto-reply
-            "ignored_usernames": ["Skbindas", "abhi6753"] 
+            "ignored_usernames": ["abhi$", "abhi6753"] 
         }
         self.load(force=True)
     
@@ -1402,3 +1402,4 @@ async def selfbot():
             await asyncio.sleep(10)  # Wait before retrying
 
 asyncio.run(selfbot())
+
