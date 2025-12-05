@@ -3,7 +3,21 @@ import sys
 import subprocess
 import importlib
 import json
-import requests # Need to import requests here for the fix to work in the main loop
+import requests
+import random
+import time
+import asyncio
+import google.generativeai as palm
+from dotenv import load_dotenv
+from langdetect import detect
+from emoji import emojize
+from datetime import datetime
+from colorama import init, Fore, Back, Style
+
+# Initialize colorama for Windows
+init()
+
+# --- Configuration & Initialization Functions ---
 
 # Auto-requirements checker
 def check_and_install_requirements():
@@ -25,15 +39,13 @@ def check_and_install_requirements():
     
     missing_packages = []
     
-    # Check each package
     for package, pip_name in required_packages.items():
         try:
-            if package == "dotenv":
-                importlib.import_module("dotenv")
-            elif package == "google.generativeai":
+            # Simplified import check
+            if package == "google.generativeai":
                 importlib.import_module("google.generativeai")
-            elif package == "fake_useragent":
-                importlib.import_module("fake_useragent")
+            elif package == "dotenv":
+                importlib.import_module("dotenv")
             elif package == "dateutil":
                 importlib.import_module("dateutil")
             else:
@@ -41,7 +53,6 @@ def check_and_install_requirements():
         except ImportError:
             missing_packages.append(pip_name)
     
-    # Install missing packages
     if missing_packages:
         print("🔍 Checking Discord Bot Requirements...")
         print("=" * 50)
@@ -64,22 +75,10 @@ def check_and_install_requirements():
     
     return True
 
-# Check requirements before importing
+# Check requirements before proceeding (Note: You had this repeated, kept the original structure)
 if not check_and_install_requirements():
     print("❌ Failed to install required packages. Exiting...")
     sys.exit(1)
-
-# Now import all packages
-import requests
-import random
-import time
-import asyncio
-import google.generativeai as palm
-import json
-from dotenv import load_dotenv
-from langdetect import detect
-from emoji import emojize
-from datetime import datetime
 
 # Load .env file
 load_dotenv()
@@ -116,46 +115,54 @@ class GeminiKeyManager:
         self.cooldowns = {}  # key -> available_after_timestamp
         if initial_key:
             self._add_key(initial_key)
-        # Load extra keys from env and config if available
+        
         try:
             for k in (ENV_GEMINI_KEYS or []):
                 self._add_key(k)
+            # Placeholder for config manager access if defined later
             if 'config_manager' in globals() and hasattr(config_manager, 'config'):
                 extra = config_manager.config.get('gemini_api_keys') or []
                 for k in extra:
                     self._add_key(k)
         except Exception:
             pass
+            
+        # Ensure we don't exceed the max cap
+        self.keys = self.keys[:MAX_GEMINI_KEYS]
+        
         if self.keys:
             palm.configure(api_key=self.keys[0])
-    
+            
     def _add_key(self, key: str):
         if isinstance(key, str) and len(key) > 10 and key not in self.keys:
             self.keys.append(key)
             self.cooldowns[key] = 0
-    
+            
     def current_key(self):
         return self.keys[self.index] if self.keys else None
-    
+        
     def _advance_to_available(self):
         if not self.keys:
             return None
-        start = self.index
         now = time.time()
+        
+        # Check starting from current index, wrap around
         for _ in range(len(self.keys)):
             k = self.keys[self.index]
             if now >= self.cooldowns.get(k, 0):
                 palm.configure(api_key=k)
                 return k
             self.index = (self.index + 1) % len(self.keys)
+            
+        # If all keys are on cooldown
         return None
-    
+        
     def next_key(self):
         if not self.keys:
             return None
         self.index = (self.index + 1) % len(self.keys)
         return self._advance_to_available()
-    
+        
     def set_cooldown(self, key: str, seconds: int):
         if key in self.cooldowns:
             self.cooldowns[key] = max(self.cooldowns.get(key, 0), time.time() + max(0, seconds))
@@ -166,36 +173,13 @@ try:
     key_manager = GeminiKeyManager(GEMINI_API_KEY)
 except Exception:
     key_manager = None
-
-# Check requirements before importing
-if not check_and_install_requirements():
-    print("❌ Failed to install required packages. Exiting...")
-    sys.exit(1)
-
-# Now import all packages
-import requests
-import random
-import time
-import asyncio
-import google.generativeai as palm
-import json
-from dotenv import load_dotenv
-from langdetect import detect
-from emoji import emojize
-from datetime import datetime
-
-# Load .env file
-load_dotenv()
-
-DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-HEADERS = {
-    "Authorization": DISCORD_TOKEN,
-    "Content-Type": "application/json"
-}
-
-# Gemini AI Configuration
-palm.configure(api_key=GEMINI_API_KEY)
+    
+# Gemini AI Configuration (Fallback if key_manager failed)
+if not key_manager or not key_manager.keys:
+    if GEMINI_API_KEY:
+        palm.configure(api_key=GEMINI_API_KEY)
+    else:
+        print_status("❌ CRITICAL: No Gemini API Key found or initialized.", 'error')
 model = palm.GenerativeModel("gemini-2.5-flash")
 
 # Language Detection Function
@@ -205,8 +189,7 @@ def detect_language(text):
     except:
         return 'en'  # Default to English if detection fails
 
-# GET_RANDOM_EMOJIS FUNCTION IS NO LONGER USED, BUT WE KEEP IT FOR COMPATIBILITY
-# Get Random Emojis based on message sentiment
+# GET_RANDOM_EMOJIS FUNCTION (Kept for completeness but not used in the new persona)
 def get_random_emojis(count=2, sentiment='happy'):
     emoji_map = {
         'happy': [':grinning_face:', ':beaming_face_with_smiling_eyes:', ':face_with_tears_of_joy:', 
@@ -223,7 +206,6 @@ def get_random_emojis(count=2, sentiment='happy'):
     }
     emojis = emoji_map.get(sentiment, emoji_map['happy'])
     selected = random.sample(emojis, min(count, len(emojis)))
-    # We return raw string, the main function handles the emoji removal now
     return ' '.join(emojize(emoji) for emoji in selected) 
 
 
@@ -259,87 +241,40 @@ ANTI_BAN_CONFIG = {
 
 # AI Reply Function with improved context handling
 def get_gemini_response(prompt, detected_lang, message_type='general'):
-    try:
-        # Ensure key manager exists (lazy init)
-        global key_manager
-        if 'key_manager' not in globals() or key_manager is None:
-            extra = []
-            try:
-                extra = config_manager.config.get('gemini_api_keys') or []
-            except Exception:
-                extra = []
-            keys = []
-            if GEMINI_API_KEY and len(GEMINI_API_KEY) > 10:
-                keys.append(GEMINI_API_KEY)
-            for k in extra:
-                if isinstance(k, str) and len(k) > 10 and k not in keys:
-                    keys.append(k)
-            # Apply cap
-            keys = keys[:MAX_GEMINI_KEYS]
-            
-            class _KM:
-                def __init__(self, keys_list):
-                    self.keys = keys_list or []
-                    self.index = 0
-                    if self.keys:
-                        palm.configure(api_key=self.keys[0])
-                def current_key(self):
-                    return self.keys[self.index] if self.keys else None
-                def next_key(self):
-                    if not self.keys:
-                        return None
-                    self.index = (self.index + 1) % len(self.keys)
-                    palm.configure(api_key=self.keys[self.index])
-                    return self.current_key()
-            key_manager = _KM(keys)
+    
+    # 1. Lazy initialization/reconfiguration of key manager if needed
+    global key_manager
+    if 'key_manager' not in globals() or key_manager is None or not key_manager.keys:
+        # Re-initialize key manager if needed (simplified check)
+        key_manager = GeminiKeyManager(GEMINI_API_KEY)
 
+    try:
+        # 2. Check rate limit
         if not ai_rate_limiter.can_make_request():
             return "Rate limit exceeded. Please try again later."
 
-        # === START MODIFICATION FOR ENGLISH-ONLY AND NO EMOJI (REVISED) ===
-        # 1. Force English language instruction and persona
+        # 3. Persona and Instructions
         lang_instructions = {
+            # Force English and no emoji instruction for your specific persona request
             'en': 'Reply only in English language with 1-2 friendly sentences. Do not use any emojis in the response.'
         }
-        
-        # 2. Add the Indian persona instruction here:
-        # NOTE: The main prompt must override the standard 'You are a helpful Discord user.' base identity
         
         # Set detected_lang to 'en' to use the English-only instruction
         detected_lang = 'en'
         
-        # Original templates (we rely on the prompt to override them)
         templates = {
-            'general': ['Keep the response natural and conversational.',
-                        'Add some personality to the response.',
-                        'Make the response engaging but concise.',
-                        'Be friendly and approachable.'],
-            'question': ['Provide a helpful and clear answer.',
-                         'Be informative but keep it simple.',
-                         'Answer directly with a friendly tone.',
-                         'Give practical and actionable advice.'],
-            'help': ['Offer assistance in a supportive way.',
-                     'Be encouraging and helpful.',
-                     'Provide guidance with a positive tone.',
-                     'Show empathy and understanding.'],
-            'reply': ['Acknowledge the previous message naturally.',
-                      'Respond in a contextually appropriate way.',
-                      'Keep the conversation flowing smoothly.',
-                      'Build on the previous message naturally.'],
-            'casual': ['Keep it casual and friendly like talking to a friend.',
-                       'Use simple, everyday language.',
-                       'Be relaxed and informal.'],
-            'professional': ['Keep it professional but warm.',
-                             'Be helpful and informative.',
-                             'Maintain a helpful tone.'],
-            'funny': ['Make the response humorous and entertaining.',
-                      'Add some jokes or witty remarks.',
-                      'Keep it light and fun.']
+            'general': ['Keep the response natural and conversational.', 'Add some personality to the response.', 'Make the response engaging but concise.', 'Be friendly and approachable.'],
+            'question': ['Provide a helpful and clear answer.', 'Be informative but keep it simple.', 'Answer directly with a friendly tone.', 'Give practical and actionable advice.'],
+            'help': ['Offer assistance in a supportive way.', 'Be encouraging and helpful.', 'Provide guidance with a positive tone.', 'Show empathy and understanding.'],
+            'reply': ['Acknowledge the previous message naturally.', 'Respond in a contextually appropriate way.', 'Keep the conversation flowing smoothly.', 'Build on the previous message naturally.'],
+            'casual': ['Keep it casual and friendly like talking to a friend.', 'Use simple, everyday language.', 'Be relaxed and informal.'],
+            'professional': ['Keep it professional but warm.', 'Be helpful and informative.', 'Maintain a helpful tone.'],
+            'funny': ['Make the response humorous and entertaining.', 'Add some jokes or witty remarks.', 'Keep it light and fun.']
         }
         
         try:
             current_pattern = smart_timer.get_current_pattern()
-        except:
+        except Exception:
             current_pattern = 'general'
             
         if current_pattern == 'quiet':
@@ -352,7 +287,7 @@ def get_gemini_response(prompt, detected_lang, message_type='general'):
             template = random.choice(templates.get('funny', templates['general']))
         else:
             template = random.choice(templates.get(message_type, templates['general']))
-        
+            
         human_variations = [
             "Make it sound like a real person typing, not a bot.",
             "Use casual, everyday language like a friend would.",
@@ -369,15 +304,41 @@ def get_gemini_response(prompt, detected_lang, message_type='general'):
         full_prompt = f"{base_identity}\n" \
                       f"{lang_instructions.get('en')}\n" \
                       f"{template}\n{human_instruction}\n\n{prompt}"
-        # === END MODIFICATION FOR ENGLISH-ONLY AND PERSONA ===
+                      
+        # 4. Generate Content (with retry/rotation logic)
+        current_key = key_manager.current_key() if key_manager else GEMINI_API_KEY
+        response = None
         
-        response = model.generate_content(full_prompt)
+        for attempt in range(2):
+            try:
+                if key_manager and attempt > 0:
+                    current_key = key_manager.next_key()
+                    if not current_key:
+                        raise Exception("All Gemini keys are rate limited or invalid.")
+                        
+                response = model.generate_content(full_prompt)
+                response_text = response.text.strip()
+                break # Success
+            except Exception as e:
+                err_text = str(e).lower()
+                if any(t in err_text for t in ["rate limit", "quota", "permission", "unauthorized", "invalid api"]):
+                    # Mark key as on cooldown and try next one
+                    retry_seconds = 30 
+                    if key_manager and current_key:
+                        key_manager.set_cooldown(current_key, retry_seconds)
+                    if attempt == 0:
+                        print_status(f"⚠️ Gemini API key failed ({current_key[:10]}...): {err_text}. Attempting rotation.", 'warning')
+                        continue # Retry with next key
+                else:
+                    raise # Re-raise if not a key or rate limit issue
+        
+        if not response:
+             return "AI Error: Failed to generate response after retries."
+             
+        # 5. Post-Processing
         response_text = response.text.strip()
         
-        # === START MODIFICATION FOR EMOJI REMOVAL AND POST-PROCESSING ===
-        # The following logic strips greetings, controls length, and ensures no emojis are returned.
-        
-        # Remove greeting openings (Original Logic)
+        # Remove greeting openings 
         lowered = response_text.lower().lstrip()
         for greet in ["hey", "hi", "hello", "hey there", "hi there", "hello there"]:
             if lowered.startswith(greet):
@@ -388,86 +349,82 @@ def get_gemini_response(prompt, detected_lang, message_type='general'):
                     response_text = response_text.lstrip("-,.!:; ")
                 break
         
-        # Control response length (Original Logic)
+        # Control response length
         if len(response_text) > 200:
             response_text = response_text[:200] + "..."
-        
-        # Add human-like variations (Original Logic)
+            
+        # Add human-like variations
         if random.random() < 0.2:  # 20% chance
             response_text = response_text.replace('.', '...').replace('!', '!!')
             
-        # The previous logic to place emojis is skipped by returning the text directly.
         return response_text
-        # === END MODIFICATION FOR EMOJI REMOVAL ===
         
     except Exception as e:
-        # On rate limits or key-related errors, rotate key and retry once
-        err_text = str(e).lower()
-        if any(t in err_text for t in ["rate limit", "quota", "permission", "unauthorized", "invalid api"]):
-            try:
-                old_key = key_manager.current_key() if 'key_manager' in globals() and key_manager else None
-                # Parse retry delay seconds if present
-                retry_seconds = 30
-                for token in err_text.replace('\n', ' ').split():
-                    try:
-                        val = int(token)
-                        if 0 < val < 3600:
-                            retry_seconds = val
-                            break
-                    except Exception:
-                        pass
-                if old_key and key_manager:
-                    key_manager.set_cooldown(old_key, retry_seconds)
-                new_key = key_manager.next_key() if key_manager else None
-            except Exception:
-                new_key = None
-                old_key = None
-            if new_key and new_key != old_key:
-                try:
-                    response = model.generate_content(full_prompt)
-                    response_text = response.text.strip()
-                    # Re-apply post-processing (simplified for English/No Emoji)
-                    lowered = response_text.lower().lstrip()
-                    for greet in ["hey", "hi", "hello", "hey there", "hi there", "hello there"]:
-                        if lowered.startswith(greet):
-                            parts = response_text.split(' ', 1)
-                            if len(parts) == 2:
-                                response_text = parts[1].lstrip("-,.!:; ")
-                            else:
-                                response_text = response_text.lstrip("-,.!:; ")
-                            break
-                    if len(response_text) > 200:
-                        response_text = response_text[:200] + "..."
-                    if random.random() < 0.2:
-                        response_text = response_text.replace('.', '...').replace('!', '!!')
-                    # RETURN WITHOUT EMOJIS
-                    return response_text 
-                except Exception as e2:
-                    return f"AI Error: {e2}"
         return f"AI Error: {e}"
 
-# Custom Timer Function with Human-like Behavior
+# Custom Timer Function with Human-like Behavior (MODIFIED FOR BETTER ERROR CHECKING)
 async def send_reply(channel_id, message, delay, message_id=None):
-    # Simulate human typing (random typing time based on message length)
+    """Sends a reply message to Discord with human-like typing and delay."""
+    
+    # 1. Simulate human typing
     typing_time = min(len(message) * 0.1, 3)  # Max 3 seconds typing
     await asyncio.sleep(typing_time)
     
-    # Add random delay before sending
+    # 2. Add random delay before sending
     await asyncio.sleep(delay)
     
     data = {
         "content": message,
+        # Ensure message_reference is only added if message_id exists and is not None
         "message_reference": {
             "message_id": message_id,
             "channel_id": channel_id
         } if message_id else None
     }
-    requests.post(f"https://discord.com/api/v9/channels/{channel_id}/messages", headers=HEADERS, json=data)
+    
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(
+                f"https://discord.com/api/v9/channels/{channel_id}/messages", 
+                headers=HEADERS, 
+                json=data,
+                timeout=10 # Add timeout for robustness
+            )
+            
+            if response.status_code == 200:
+                print_status(f"✅ Discord Message Sent to Channel {channel_id}", 'success')
+                bot_dashboard.update_stats(response_sent=True)
+                return True
+            
+            elif response.status_code == 429:
+                # Discord Rate Limit Detected
+                retry_after = int(response.headers.get('Retry-After', 5))
+                print_status(f"❌ Discord Rate Limited (429). Waiting {retry_after}s.", 'error')
+                await asyncio.sleep(retry_after)
+                continue # Retry after sleep
+                
+            elif response.status_code in (401, 403, 400):
+                # Unauthorized (token invalid), Forbidden (no permissions), Bad Request (bad message format)
+                print_status(f"❌ Discord API Error {response.status_code}: Cannot send message (Permissions/Token/Format). {response.text[:100]}", 'error')
+                return False # Fatal error, stop trying
+            
+            else:
+                # Other HTTP errors
+                print_status(f"❌ Discord HTTP Error {response.status_code}: Retrying...", 'warning')
+                await asyncio.sleep(2 ** attempt) # Exponential backoff
+        
+        except requests.exceptions.RequestException as e:
+            print_status(f"❌ Network Error during send_reply (Attempt {attempt+1}): {e}", 'error')
+            await asyncio.sleep(2 ** attempt)
+            
+    return False
+
 
 # Get Server Channels Function
 def get_servers_and_channels():
+    # ... (No changes needed here) ...
     try:
-        # Get all guilds (servers)
         guilds_response = requests.get("https://discord.com/api/v9/users/@me/guilds", headers=HEADERS)
         guilds = guilds_response.json()
         
@@ -477,11 +434,9 @@ def get_servers_and_channels():
             guild_id = guild["id"]
             guild_name = guild["name"]
             
-            # Get channels for this guild
             channels_response = requests.get(f"https://discord.com/api/v9/guilds/{guild_id}/channels", headers=HEADERS)
             channels = channels_response.json()
             
-            # Filter text channels only
             text_channels = []
             for channel in channels:
                 if channel["type"] == 0:  # Type 0 is text channel
@@ -504,6 +459,7 @@ def get_servers_and_channels():
 
 # Smart Break Timer Function
 class SmartBreakTimer:
+    # ... (No changes needed here) ...
     def __init__(self):
         self.start_time = time.time()
         self.last_break = time.time()
@@ -522,76 +478,66 @@ class SmartBreakTimer:
         
         # Alternating priority flag (robust default)
         self.prefer_new_first = False
-    
+        
     def should_take_break(self):
         current_time = time.time()
         continuous_hours = (current_time - self.last_break) / 3600
         daily_hours = (current_time - self.daily_start) / 3600
         
-        # Take break if continuous for too long
         if continuous_hours >= ANTI_BAN_CONFIG['max_continuous_hours']:
             return True, "continuous_limit"
-        
-        # Take break if daily limit reached
+            
         if daily_hours >= ANTI_BAN_CONFIG['max_daily_hours']:
             return True, "daily_limit"
-        
+            
         return False, None
     
     def get_break_duration(self):
         return ANTI_BAN_CONFIG['break_duration_minutes'] * 60
-    
+        
     def should_rotate_channel(self):
         return ANTI_BAN_CONFIG['channel_rotation'] and len(self.channels_used) > 1
-    
+        
     def get_current_pattern(self):
-        # Rotate through different response patterns
         pattern_index = int((time.time() - self.start_time) / 3600) % len(ANTI_BAN_CONFIG['response_patterns'])
         return ANTI_BAN_CONFIG['response_patterns'][pattern_index]
-    
+        
     def add_channel(self, channel_id):
         if channel_id not in self.channels_used:
             self.channels_used.append(channel_id)
-    
+            
     def get_next_channel(self):
         if len(self.channels_used) > 1:
             current_index = self.channels_used.index(self.current_channel) if self.current_channel else 0
             next_index = (current_index + 1) % len(self.channels_used)
             return self.channels_used[next_index]
         return None
-    
+        
     def can_send_new_reply(self):
-        """Check if we can send a new reply (not waiting for response)"""
         current_time = time.time()
         
-        # If waiting for response, check if enough time has passed (5 minutes)
         if self.waiting_for_response:
             if current_time - self.last_reply_time > 300:  # 5 minutes
                 self.waiting_for_response = False
                 return True
             return False
-        
-        # If not waiting, can send reply
+            
         return True
-    
+        
     def mark_reply_sent(self, user_id):
-        """Mark that we sent a reply to someone"""
         self.last_reply_time = time.time()
         self.waiting_for_response = True
         self.last_reply_to_user = user_id
-    
+        
     def check_response_received(self, messages):
-        """Check if we received a response from the user we replied to"""
         if not self.waiting_for_response or not self.last_reply_to_user:
             return False
-        
+            
         current_time = time.time()
         
-        # Look for recent messages from the user we replied to
-        for msg in messages[:10]:  # Check last 10 messages
+        for msg in messages[:10]:
             author_id = msg.get('author', {}).get('id')
             if author_id == self.last_reply_to_user:
-                # Check if message is recent (within last 2 minutes)
                 timestamp = msg.get('timestamp', '')
                 if timestamp:
                     try:
@@ -599,16 +545,14 @@ class SmartBreakTimer:
                         message_timestamp = message_time.timestamp()
                         
                         if current_time - message_timestamp < 120:  # 2 minutes
-                            # User responded, stop waiting
                             self.waiting_for_response = False
                             return True
-                    except:
+                    except Exception:
                         pass
-        
+                        
         return False
-    
+        
     def start_conversation(self, user_id, username):
-        """Start a new conversation with a user"""
         current_time = time.time()
         self.active_conversations[user_id] = {
             'start_time': current_time,
@@ -618,9 +562,8 @@ class SmartBreakTimer:
         }
         self.enforce_capacity()
         print_status(f"💬 Started conversation with {username}", 'info')
-    
+        
     def continue_conversation(self, user_id, username):
-        """Continue an existing conversation"""
         if user_id in self.active_conversations:
             current_time = time.time()
             conv = self.active_conversations[user_id]
@@ -630,26 +573,23 @@ class SmartBreakTimer:
             print_status(f"💬 Continuing conversation with {username} (Message #{conv['message_count']})", 'info')
             return True
         return False
-    
+        
     def can_continue_conversation(self, user_id):
-        """Check if we can continue conversation (within 5 minute timeout)"""
         if user_id not in self.active_conversations:
             return False
-        
+            
         current_time = time.time()
         conv = self.active_conversations[user_id]
         time_since_last = current_time - conv['last_message_time']
         
-        # If more than 5 minutes, conversation expired
         if time_since_last > self.conversation_timeout:
             del self.active_conversations[user_id]
             print_status(f"⏰ Conversation with {conv['username']} expired (5 min timeout)", 'warning')
             return False
-        
+            
         return True
-    
+        
     def cleanup_expired_conversations(self):
-        """Remove expired conversations and enforce capacity"""
         current_time = time.time()
         expired_users = []
         
@@ -661,21 +601,18 @@ class SmartBreakTimer:
             username = self.active_conversations[user_id]['username']
             del self.active_conversations[user_id]
             print_status(f"⏰ Conversation with {username} expired and removed", 'warning')
-        
+            
         self.enforce_capacity()
-    
+        
     def enforce_capacity(self):
-        """Ensure at most max_conversations remain; drop expired first, then oldest by last_message_time."""
         current_time = time.time()
-        # Remove expired first
         expired = [uid for uid, conv in self.active_conversations.items() if current_time - conv['last_message_time'] > self.conversation_timeout]
         for uid in expired:
             username = self.active_conversations[uid]['username']
             del self.active_conversations[uid]
             print_status(f"⏰ Conversation with {username} expired and removed", 'warning')
-        # If still over capacity, remove oldest by last_message_time
+            
         if len(self.active_conversations) > self.max_conversations:
-            # Sort by last_message_time ascending (oldest first)
             sorted_items = sorted(self.active_conversations.items(), key=lambda x: x[1]['last_message_time'])
             to_remove = len(self.active_conversations) - self.max_conversations
             for i in range(to_remove):
@@ -685,7 +622,6 @@ class SmartBreakTimer:
                     print_status(f"♻️ Removed oldest conversation ({conv['username']}) to keep top {self.max_conversations}", 'info')
 
     def get_conversation_status(self):
-        """Get current conversation status"""
         if not self.active_conversations:
             return "No active conversations"
         
@@ -703,29 +639,27 @@ class SmartBreakTimer:
             setattr(self, 'prefer_new_first', bool(value))
         except Exception:
             self.prefer_new_first = bool(value)
-    
+        
     def should_prefer_new_first(self) -> bool:
         return bool(getattr(self, 'prefer_new_first', False))
 
 # Initialize smart break timer
 smart_timer = SmartBreakTimer()
-# Ensure alternating flag exists even if older objects are reused
 if not hasattr(smart_timer, 'prefer_new_first'):
     smart_timer.prefer_new_first = False
 
 # Advanced Error Handling & Recovery System
 class ErrorHandler:
+    # ... (No changes needed here) ...
     def __init__(self):
         self.error_count = 0
         self.last_error_time = 0
         self.error_types = {}
-    
+        
     def handle_error(self, error, context, operation):
-        """Handle different types of errors with recovery strategies"""
         current_time = time.time()
         error_type = type(error).__name__
         
-        # Update error tracking
         self.error_count += 1
         self.last_error_time = current_time
         
@@ -733,52 +667,44 @@ class ErrorHandler:
             self.error_types[error_type] = 0
         self.error_types[error_type] += 1
         
-        # Log error
         print_status(f"❌ Error in {operation}: {error_type}", 'error')
         print_status(f"Context: {context}", 'warning')
         
-        # Update dashboard
         bot_dashboard.update_stats(error_occurred=True)
         
-        # Recovery strategies
-        if error_type == 'ConnectionError':
+        if error_type == 'ConnectionError' or 'ConnectionError' in str(error):
             return self.handle_connection_error()
-        elif error_type == 'RateLimitError':
+        elif error_type == 'RateLimitError' or '429' in str(error):
             return self.handle_rate_limit_error()
-        elif error_type == 'TimeoutError':
+        elif error_type == 'TimeoutError' or 'Timeout' in str(error):
             return self.handle_timeout_error()
         else:
             return self.handle_generic_error()
-    
+            
     def handle_connection_error(self):
-        """Handle connection errors"""
         print_status("🔄 Connection error detected. Attempting to reconnect...", 'warning')
-        time.sleep(5)  # Wait before retry
+        time.sleep(5)
         return True
-    
+        
     def handle_rate_limit_error(self):
-        """Handle rate limit errors"""
         print_status("⏰ Rate limit reached. Waiting 30 seconds...", 'warning')
         time.sleep(30)
         return True
-    
+        
     def handle_timeout_error(self):
-        """Handle timeout errors"""
         print_status("⏱️ Timeout error. Retrying with longer timeout...", 'warning')
         time.sleep(3)
         return True
-    
+        
     def handle_generic_error(self):
-        """Handle generic errors"""
         print_status("⚠️ Generic error. Waiting 10 seconds before retry...", 'warning')
         time.sleep(10)
         return True
-    
+        
     def should_continue_operation(self):
-        """Check if we should continue operations after errors"""
-        if self.error_count > 10:  # Too many errors
+        if self.error_count > 10:
             return False
-        if time.time() - self.last_error_time < 60:  # Recent errors
+        if time.time() - self.last_error_time < 60:
             return False
         return True
 
@@ -787,6 +713,7 @@ error_handler = ErrorHandler()
 
 # Enhanced Function to fetch messages from a channel
 async def fetch_channel_messages(channel_id, limit=20):
+    # ... (No changes needed here) ...
     max_retries = 3
     retry_count = 0
     
@@ -802,7 +729,7 @@ async def fetch_channel_messages(channel_id, limit=20):
                 messages = response.json()
                 bot_dashboard.update_stats(message_processed=True)
                 return messages
-            elif response.status_code == 429:  # Rate limited
+            elif response.status_code == 429:
                 retry_after = int(response.headers.get('Retry-After', 30))
                 print_status(f"⏰ Rate limited. Waiting {retry_after} seconds...", 'warning')
                 await asyncio.sleep(retry_after)
@@ -820,31 +747,27 @@ async def fetch_channel_messages(channel_id, limit=20):
         except Exception as e:
             print_status(f"❌ Unexpected error: {e}", 'error')
             error_handler.handle_error(e, f"Channel {channel_id}", "fetch_messages")
-        
+            
         retry_count += 1
         if retry_count < max_retries:
             await asyncio.sleep(2 ** retry_count)  # Exponential backoff
-    
+            
     print_status("❌ Max retries reached for fetch_messages", 'error')
     return []
 
-from colorama import init, Fore, Back, Style
-
-# Initialize colorama for Windows
-init()
 
 # Simple event logger for UI
 class EventLogger:
     def __init__(self, capacity: int = 5):
         self.capacity = capacity
         self.events = []
-    
+        
     def add(self, text: str):
         ts = time.strftime('%H:%M:%S')
         self.events.append(f"[{ts}] {text}")
         if len(self.events) > self.capacity:
             self.events.pop(0)
-    
+            
     def last(self):
         return list(self.events)
 
@@ -852,6 +775,7 @@ ui_events = EventLogger(5)
 
 # Professional Dashboard UI System
 class BotDashboard:
+    # ... (No changes needed here) ...
     def __init__(self):
         self.stats = {
             'messages_processed': 0,
@@ -866,7 +790,7 @@ class BotDashboard:
         self.mode = "casual"
         self.slowmode = 5
         self.next_refresh_eta = 0
-    
+        
     def update_stats(self, message_processed=False, response_sent=False, error_occurred=False):
         if message_processed:
             self.stats['messages_processed'] += 1
@@ -874,23 +798,23 @@ class BotDashboard:
             self.stats['responses_sent'] += 1
         if error_occurred:
             self.stats['errors_occurred'] += 1
-    
+            
     def set_context(self, channel_id: str, channel_name: str, mode: str, slowmode: int, eta: int):
         self.channel_id = channel_id
         self.channel_name = channel_name
         self.mode = mode
         self.slowmode = slowmode
         self.next_refresh_eta = eta
-    
+        
     def get_uptime(self):
         uptime_seconds = time.time() - self.stats['start_time']
         return uptime_seconds / 3600
-    
+        
     def get_response_rate(self):
         if self.stats['messages_processed'] == 0:
             return 0.0
         return (self.stats['responses_sent'] / self.stats['messages_processed']) * 100
-    
+        
     def display_dashboard(self):
         os.system('cls' if os.name == 'nt' else 'clear')
         uptime = self.get_uptime()
@@ -902,7 +826,7 @@ class BotDashboard:
         print("=" * max(80, len(header)))
         
         print("╔══════════════════════════════════════════════════════════════════════════════╗")
-        print("║                                🤖 ADVANCED DISCORD BOT DASHBOARD             ║")
+        print("║                               🤖 ADVANCED DISCORD BOT DASHBOARD             ║")
         print("╠══════════════════════════════════════════════════════════════════════════════╣")
         print(f"║ Status: {self.status:<65} ║")
         print(f"║ Uptime: {uptime:.1f} hours{' ' * 55} ║")
@@ -940,7 +864,7 @@ def print_status(text, status_type='info'):
     print(f"{color}{Style.BRIGHT}{text}{Style.RESET_ALL}")
 
 def show_progress_bar(description, current, total, width=50):
-    """Show animated progress bar"""
+    # ... (Not used in the main loop, kept as is) ...
     progress = int(width * current / total)
     bar = '█' * progress + '░' * (width - progress)
     percentage = current / total * 100
@@ -968,6 +892,7 @@ def is_on_cooldown(user_id: str, min_seconds: int = 60, max_seconds: int = 120) 
 
 # Config manager
 class ConfigManager:
+    # ... (No changes needed here) ...
     def __init__(self, path: str = "config.json"):
         self.path = path
         self.last_mtime = 0
@@ -979,12 +904,11 @@ class ConfigManager:
             "webhook_url": "",
             "owner_id": "",
             "gemini_api_keys": [], # Added for multiple API keys
-            # UPDATED: List of usernames and USER IDs to ignore
-            "ignored_usernames": ["Skbindas", "abhi$", "1050008136846671922"], 
+            "ignored_usernames": ["Skbindas", "abhi$", "1050008136846671922"],  
             "ignored_user_ids": ["1050008136846671922"]
         }
         self.load(force=True)
-    
+        
     def load(self, force: bool = False):
         try:
             if not os.path.exists(self.path):
@@ -994,37 +918,33 @@ class ConfigManager:
                 with open(self.path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                     if isinstance(data, dict):
-                        # Use .get() to safely update and keep existing keys if not in file
                         self.config.update(data)
-                        # Ensure lists are updated, not replaced by missing keys
                         self.config["ignored_usernames"] = data.get("ignored_usernames", self.config["ignored_usernames"])
                         self.config["ignored_user_ids"] = data.get("ignored_user_ids", self.config["ignored_user_ids"])
                         self.last_mtime = mtime
                         print_status("🔁 Config loaded", 'info')
         except Exception as e:
             print_status(f"Config load error: {e}", 'error')
-    
+            
     def get_owner_id(self):
         return self.config.get("owner_id") or os.getenv("BOT_OWNER_ID", "")
-    
+        
     def get_mode(self):
         return self.config.get("default_mode", "casual")
-    
+        
     def get_slowmode(self, channel_id: str):
         overrides = self.config.get("channels", {}).get("overrides", {})
         if channel_id in overrides and isinstance(overrides[channel_id], int):
             return overrides[channel_id]
         return self.config.get("channels", {}).get("default_slowmode", 5)
-    
+        
     def get_cooldown_range(self):
         cd = self.config.get("cooldown_seconds", {})
         return int(cd.get("min", 60)), int(cd.get("max", 120))
-    
-    # NEW FUNCTION: Get list of usernames to ignore
+        
     def get_ignored_usernames(self):
         return self.config.get("ignored_usernames", [])
         
-    # NEW FUNCTION: Get list of user IDs to ignore
     def get_ignored_user_ids(self):
         return self.config.get("ignored_user_ids", [])
 
@@ -1034,15 +954,14 @@ config_manager = ConfigManager()
 
 # Startup validation checks
 def validate_startup():
+    # ... (No changes needed here) ...
     problems = []
 
-    # Check env vars
     if not DISCORD_TOKEN or len(DISCORD_TOKEN) < 10:
         problems.append("DISCORD_TOKEN is missing/invalid in .env")
-    if not GEMINI_API_KEY or len(GEMINI_API_KEY) < 10:
-        problems.append("GEMINI_API_KEY is missing/invalid in .env")
+    if not GEMINI_API_KEY and not ENV_GEMINI_KEYS:
+        problems.append("GEMINI_API_KEY or GEMINI_API_KEYS is missing/invalid in .env")
 
-    # Check Discord reachability (best-effort)
     try:
         resp = requests.get("https://discord.com/api/v9/users/@me", headers=HEADERS, timeout=15)
         if resp.status_code not in (200, 401):
@@ -1052,13 +971,11 @@ def validate_startup():
     except Exception as e:
         problems.append(f"Discord reachability error: {e}")
 
-    # Check Gemini reachable (best-effort)
     try:
-        # Note: We are using the global 'model' defined above
-        _ = model.generate_content("ping") 
+        # Check model reachability using a simple prompt
+        _ = model.generate_content("ping")  
     except Exception as e:
         err = str(e).lower()
-        # If it's a rate-limit/quota error, warn but don't block startup
         if any(t in err for t in ["rate limit", "quota", "retry_delay", "exceeded"]):
             print_status(f"⚠ Gemini quota warning: {e}", 'warning')
         else:
@@ -1073,23 +990,21 @@ def validate_startup():
     print_status("✅ Startup checks passed", 'success')
     return True
 
-# Selfbot Main Function
+# Selfbot Main Function (FIXED: Uses get_gemini_response and removed duplicate logic)
 async def selfbot():
     print_header("Discord Chat Bot")
     print_status("Bot is starting...", 'info')
 
-    # Validate environment and connectivity
     if not validate_startup():
         print_status("Fix the above issues and restart the bot.", 'error')
         return
     
-    # Ask for channel IDs with validation
+    # Input and Channel Setup
     channels_input = input(f"{Fore.CYAN}👉 Enter channel IDs (separate with comma for multiple): {Style.RESET_ALL}").strip()
     if not channels_input:
         print_status("Channel IDs cannot be empty. Please try again.", 'error')
         return
     
-    # Parse multiple channels
     channel_ids = [cid.strip() for cid in channels_input.split(',')]
     valid_channels = []
     
@@ -1103,19 +1018,17 @@ async def selfbot():
         print_status("No valid channel IDs provided. Exiting...", 'error')
         return
     
-    # Use first channel as primary, others for rotation
     channel_id = valid_channels[0]
     for cid in valid_channels:
         smart_timer.add_channel(cid)
     
     print_status(f"✅ Added {len(valid_channels)} channels for rotation", 'success')
 
-    # Ask for slow mode with validation
     if channel_id not in CHANNEL_SLOW_MODES:
         while True:
             slow_mode_input = input(f"{Fore.CYAN}🔄 Enter Slow Mode (seconds, default 5): {Style.RESET_ALL}").strip()
-            if not slow_mode_input:  # Use default value if empty
-                slow_mode = random.randint(3, 8)  # Random delay between 3-8 seconds
+            if not slow_mode_input:
+                slow_mode = random.randint(3, 8)
                 break
             try:
                 slow_mode = int(slow_mode_input)
@@ -1127,63 +1040,46 @@ async def selfbot():
                 print_status("Please enter a valid number for slow mode.", 'error')
         CHANNEL_SLOW_MODES[channel_id] = slow_mode
     
-    # Register channel with smart timer
     smart_timer.add_channel(channel_id)
     smart_timer.current_channel = channel_id
     
     print_status("✅ Bot successfully initialized!", 'success')
-    print_status(f"🛡️ Anti-ban mode: ON (Max {ANTI_BAN_CONFIG['max_continuous_hours']}h continuous, {ANTI_BAN_CONFIG['max_daily_hours']}h daily)", 'info')
-    print_status(f"🔄 Channel rotation: {'ON' if ANTI_BAN_CONFIG['channel_rotation'] else 'OFF'}", 'info')
-    print_status(f"🎭 Response patterns: {', '.join(ANTI_BAN_CONFIG['response_patterns'])}", 'info')
     
-    # Show initial dashboard
     bot_dashboard.display_dashboard()
     
     BOT_OWNER_ID = os.getenv("BOT_OWNER_ID", "")
-    BOT_PAUSED = False
     CURRENT_MODE = "casual"
     
-    # Load ignored lists from config
     IGNORED_USERS = config_manager.get_ignored_usernames()
     IGNORED_USER_IDS = config_manager.get_ignored_user_ids()
 
     while True:
         try:
-            # Hot-reload config
+            # Config Reload and Anti-Ban Checks
             config_manager.load()
             
-            # Apply dynamic owner/mode/slowmode/cooldown
             BOT_OWNER_ID = config_manager.get_owner_id()
             CURRENT_MODE = config_manager.get_mode()
             CHANNEL_SLOW_MODES[channel_id] = config_manager.get_slowmode(channel_id)
             cd_min, cd_max = config_manager.get_cooldown_range()
-            # Update IGNORED_USERS list dynamically
             IGNORED_USERS = config_manager.get_ignored_usernames()
             IGNORED_USER_IDS = config_manager.get_ignored_user_ids()
             
-            # Check if we should take a break (anti-ban)
             should_break, break_reason = smart_timer.should_take_break()
             if should_break:
                 ui_events.add(f"Taking break: {break_reason}")
                 break_duration = smart_timer.get_break_duration()
                 print_status(f"🛡️ Taking anti-ban break for {break_duration//60} minutes...", 'warning')
-                print_status(f"Reason: {break_reason}", 'info')
                 
-                # Countdown for break
                 for i in range(break_duration//60, 0, -1):
                     print(f"\r{Fore.YELLOW}⏰ Break remaining: {i} minutes{Style.RESET_ALL}", end='')
                     await asyncio.sleep(60)
                 print()
                 
-                # Reset break timer
                 smart_timer.last_break = time.time()
                 print_status("✅ Break completed! Resuming...", 'success')
+                continue
                 
-                # Force refresh messages after break
-                print_status("🔄 Refreshing messages after break...", 'info')
-                continue  # Skip to next iteration to process messages immediately
-                
-            # Check if we should rotate channels
             if smart_timer.should_rotate_channel():
                 new_channel = smart_timer.get_next_channel()
                 if new_channel and new_channel != channel_id:
@@ -1192,24 +1088,21 @@ async def selfbot():
                     channel_id = new_channel
                     smart_timer.current_channel = channel_id
             
-            # Fetch recent messages from the channel
+            # Fetch Messages
             messages = await fetch_channel_messages(channel_id, 20)
             
             if not messages:
                 print("❌ No messages found or error occurred.")
-                await asyncio.sleep(10)  # Wait 10 seconds before retrying
+                await asyncio.sleep(10)
                 continue
             
-            # Clean up expired conversations
             smart_timer.cleanup_expired_conversations()
-            
-            # Check if we received a response from the user we replied to
             response_received = smart_timer.check_response_received(messages)
             if response_received:
                 ui_events.add("User responded; resuming session")
                 print_status(f"✅ Response received from user! Ready for new messages.", 'success')
             
-            # Display recent messages with enhanced formatting
+            # Display recent messages
             print_header("Recent Messages")
             for i, msg in enumerate(messages[:20]):
                 author = msg.get("author", {}).get("username", "Unknown")
@@ -1218,209 +1111,169 @@ async def selfbot():
                     truncated_content = f"{content[:50]}..." if len(content) > 50 else content
                     print(f"{Fore.GREEN}{i}.{Style.RESET_ALL} {Fore.YELLOW}{author}{Style.RESET_ALL}: {truncated_content}")
             
-            # If waiting for response, show per-second countdown but do not block
+            # Waiting state handling
             waiting = False
             remaining_wait = 0
             has_convo_reply = False
             convo_user_id = smart_timer.last_reply_to_user
+            
             if smart_timer.waiting_for_response:
                 remaining_wait = max(0, int(300 - (time.time() - smart_timer.last_reply_time)))
                 if remaining_wait > 0:
                     waiting = True
-                    print(f"\r{Fore.YELLOW}⏳ Waiting for conversation reply... ({remaining_wait}s left){Style.RESET_ALL}", end='')
-                    bot_dashboard.set_context(channel_id, channel_id, CURRENT_MODE, CHANNEL_SLOW_MODES.get(channel_id, 5), remaining_wait)
-                    # Detect if the conversation user has replied already
-                    try:
-                        for m in messages[:20]:
-                            if m.get('author', {}).get('id') == convo_user_id:
-                                ts = m.get('timestamp', '')
-                                if ts:
-                                    mt = datetime.fromisoformat(ts.replace('Z', '+00:00')).timestamp()
-                                    if time.time() - mt <= 300:
-                                        has_convo_reply = True
-                                        break
-                    except Exception:
-                        has_convo_reply = False
+                    # Check for conversation reply (redundant, but helps logic flow)
+                    for m in messages[:20]:
+                        if m.get('author', {}).get('id') == convo_user_id:
+                            ts = m.get('timestamp', '')
+                            if ts:
+                                mt = datetime.fromisoformat(ts.replace('Z', '+00:00')).timestamp()
+                                if time.time() - mt <= 300:
+                                    has_convo_reply = True
+                                    break
+                    
+                    if not has_convo_reply:
+                        print(f"\r{Fore.YELLOW}⏳ Waiting for conversation reply... ({remaining_wait}s left){Style.RESET_ALL}", end='')
+                    
                 else:
                     smart_timer.waiting_for_response = False
 
-            # Build two lists: active conversation messages and new user messages
-            convo_msgs = []
-            new_msgs = []
-            for msg in messages[:20]:
-                user_id = msg.get('author', {}).get('id')
-                if smart_timer.can_continue_conversation(user_id):
-                    convo_msgs.append(msg)
-                else:
-                    new_msgs.append(msg)
+            # Message Processing Logic
+            convo_msgs = [msg for msg in messages[:20] if smart_timer.can_continue_conversation(msg.get('author', {}).get('id'))]
+            new_msgs = [msg for msg in messages[:20] if not smart_timer.can_continue_conversation(msg.get('author', {}).get('id'))]
 
-            # If waiting and conversation user replied, ONLY process that first
             if waiting and has_convo_reply:
+                # Prioritize the conversation user's latest reply
                 convo_msgs = [m for m in convo_msgs if m.get('author', {}).get('id') == convo_user_id]
                 new_msgs = []
-            # If waiting and no conversation reply yet, ignore conversation messages and only process new users
             elif waiting and not has_convo_reply:
+                # If waiting and they haven't replied, only consider new users
                 convo_msgs = []
 
-            # Decide processing order based on alternating flag
-            process_order = []
-            if waiting:
-                # Already narrowed above
-                process_order = [convo_msgs, new_msgs]
-            elif smart_timer.should_prefer_new_first():
-                process_order = [new_msgs, convo_msgs]
-            else:
-                process_order = [convo_msgs, new_msgs]
-
-            # Toggle for next cycle only if not waiting (so preference persists during wait)
+            process_order = [new_msgs, convo_msgs] if smart_timer.should_prefer_new_first() else [convo_msgs, new_msgs]
+            
             if not waiting:
                 smart_timer.set_prefer_new_first(not smart_timer.should_prefer_new_first())
 
-            # Process messages according to order
             reply_sent = False
+            bot_user_id = DISCORD_TOKEN.split(".")[0] if DISCORD_TOKEN and '.' in DISCORD_TOKEN else None
+            
             for bucket in process_order:
                 for msg in bucket:
-                    # (reuse existing checks; this block mirrors previous per-message logic)
                     author = msg.get("author", {}).get("username", "Unknown")
-                    content = msg.get("content", "")
-                    mentions = msg.get("mentions", [])
-                    is_reply = msg.get("referenced_message") is not None
-                    bot_user_id = DISCORD_TOKEN.split(".")[0] if DISCORD_TOKEN and '.' in DISCORD_TOKEN else None
-                    
-                    # === START NEW LOGIC FOR IGNORING USERS AND SELF-REPLY (REVISED AND OPTIMIZED) ===
                     user_id = msg.get('author', {}).get('id')
-                    username = msg.get('author', {}).get('username', 'Unknown')
+                    content = msg.get("content", "")
                     
-                    # 1. Ignore the Bot's Own Messages (PREVENTS INFINITE LOOP)
+                    # Ignore own messages and ignored users
                     if user_id == bot_user_id:
                         continue
-                        
-                    # 2. Ignore Specific Users by ID or Username (INCLUDING YOURS)
-                    if user_id in IGNORED_USER_IDS or username in IGNORED_USERS:
-                        print_status(f"🚫 Ignoring message from specified user: {username} ({user_id})", 'info')
+                    if user_id in IGNORED_USER_IDS or author in IGNORED_USERS:
+                        print_status(f"🚫 Ignoring message from specified user: {author}", 'info')
                         continue
-                    # === END NEW LOGIC ===
-                    
+                        
+                    # Recency Check
                     try:
                         timestamp = msg.get('timestamp', '')
-                        if not timestamp:
-                            continue
+                        if not timestamp: continue
                         message_time = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
                         message_timestamp = message_time.timestamp()
-                        if (author == "Unknown" or 
-                            time.time() - message_timestamp > 120): # Only process recent messages
-                            continue
+                        if time.time() - message_timestamp > 120: continue # Max 2 minute old messages
                     except Exception:
                         continue
-                    content_lower = content.lower()
+                        
+                    # Decision Logic
                     should_respond = False
                     message_type = 'general'
-
+                    context = None
+                    content_lower = content.lower()
+                    
                     if smart_timer.can_continue_conversation(user_id):
                         should_respond = True
                         message_type = 'conversation'
-                        smart_timer.continue_conversation(user_id, username)
-                    elif not should_respond:
-                        referenced_message = msg.get('referenced_message')
-                        if referenced_message and referenced_message.get('author', {}).get('id') != bot_user_id:
-                            should_respond = True
-                            message_type = 'reply'
-                    elif not should_respond:
-                        if ('?' in content_lower and len(content_lower) > 10) or any(q in content_lower for q in ['what is','how do','why does','when will','where can','who is','which one']):
-                            should_respond = True
-                            message_type = 'question'
-                    elif not should_respond:
-                        if any(word in content_lower for word in ['help','how','what','why','when','where','who','please','could','would']):
-                            should_respond = True
-                            message_type = 'help'
+                        smart_timer.continue_conversation(user_id, author)
+                        context = f"This is a continuation of a conversation. {author} says: {content}"
+                    
+                    elif msg.get("referenced_message") is not None:
+                        should_respond = True
+                        message_type = 'reply'
+                        context = f"Reply to a previous message. {author} replied: {content}"
+                        
+                    elif ('?' in content_lower and len(content_lower) > 10) or any(q in content_lower for q in ['what is','how do','why does','when will','where can','who is','which one']):
+                        should_respond = True
+                        message_type = 'question'
+                        context = f"Someone asked a question. {author} asked: {content}"
+                        
+                    elif any(word in content_lower for word in ['help','how','what','why','when','where','who','please','could','would']):
+                        should_respond = True
+                        message_type = 'help'
+                        context = f"Someone needs assistance. {author} said: {content}"
+                        
                     if not should_respond:
                         continue
-                    if user_id and is_on_cooldown(user_id, cd_min, cd_max):
+                        
+                    # Cooldown Check (Only apply after a decision to respond is made)
+                    if is_on_cooldown(user_id, cd_min, cd_max):
                         continue
+                        
+                    # Random Skip Chance (20%)
                     if random.random() < 0.2:
                         continue
-
-                    context = None
-                    message_type = 'general'
-                    content_lower = content.lower()
-                    if any(mentions):
-                        context = f"Someone mentioned you in their message. {author} said: {content}"
-                        message_type = 'helpful'
-                    elif is_reply:
-                        context = f"This is a reply to a previous message. {author} replied: {content}"
-                        message_type = 'thinking'
-                    elif "?" in content:
-                        context = f"Someone asked a question. {author} asked: {content}"
-                        message_type = 'thinking'
-                    elif any(word in content_lower for word in ["help","how","what","why","when","where","who","please","could","would"]):
-                        context = f"Someone needs assistance. {author} said: {content}"
-                        message_type = 'helpful'
-                    elif any(word in content_lower for word in ["sad","sorry","worried","concerned","upset"]):
-                        context = f"Someone seems concerned. {author} said: {content}"
-                        message_type = 'sympathetic'
-                    elif any(word in content_lower for word in ["happy","great","awesome","amazing","good"]):
-                        context = f"Someone is expressing positive emotions. {author} said: {content}"
-                        message_type = 'happy'
+                        
+                    # Generate and Send Reply (FIXED SECTION)
                     if context:
-                        max_retries = 3
-                        retry_count = 0
-                        while retry_count < max_retries:
-                            try:
-                                # We already enforce English-only reply in get_gemini_response
-                                detected_lang = detect_language(content) 
-                                prompt = f"You are a helpful Discord user. Reply to this message naturally and appropriately:\n{context}"
+                        # 1. Get the response using the dedicated function
+                        detected_lang = detect_language(content)
+                        # We use a base prompt that get_gemini_response will wrap with the persona and constraints
+                        prompt_for_ai = f"Reply to this message naturally and appropriately. Message from {author}: {content}"
+                        
+                        # The function handles all AI key rotation and rate limit retries internally
+                        ai_response = get_gemini_response(prompt_for_ai, detected_lang, message_type)
+                        
+                        if ai_response and not ai_response.startswith(("AI Error", "Rate limit")):
+                            # 2. Send the reply using the human-like delay function
+                            ui_events.add(f"Reply -> {author}")
+                            human_delay = random.randint(2, 8)
+                            
+                            # send_reply will handle retries and report errors
+                            send_success = await send_reply(channel_id, ai_response, human_delay, msg.get('id'))
+                            
+                            if send_success:
+                                # 3. Update conversation state only if send was successful
+                                smart_timer.mark_reply_sent(user_id)
+                                if message_type != 'conversation':
+                                    smart_timer.start_conversation(user_id, author)
+                                    
+                                reply_sent = True
+                                print_status(f"⏳ Waiting for response from {author} (5 minutes timeout)", 'info')
+                                break # Stop processing messages in this bucket/loop
+                            else:
+                                # Send failed (e.g., Discord rate limit or permission error)
+                                ui_events.add(f"Failed to send reply to {author}")
+                                # Do not mark reply_sent, allow next bucket/channel in next cycle
                                 
-                                # 🇮🇳 NEW PROMPT: Use the Indian persona for the Gemini call
-                                base_identity = "You are a friendly, enthusiastic, and helpful human community member on Discord. You live in a major city in Maharashtra, India. Do not reveal that you are an AI model."
-                                
-                                full_prompt = f"{base_identity}\n" \
-                                              f"{lang_instructions.get('en')}\n" \
-                                              f"{template}\n{human_instruction}\n\n{prompt}"
-                                
-                                ai_response = model.generate_content(full_prompt)
-                                if ai_response and not ai_response.startswith(("AI Error", "Rate limit")):
-                                    ui_events.add(f"Reply -> {author}")
-                                    human_delay = random.randint(2, 8)
-                                    await send_reply(channel_id, ai_response, human_delay, msg.get('id'))
-                                    smart_timer.mark_reply_sent(msg.get('author', {}).get('id'))
-                                    if message_type != 'conversation':
-                                        smart_timer.start_conversation(msg.get('author', {}).get('id'), author)
-                                    reply_sent = True
-                                    print("✅ Reply sent! Waiting for response...")
-                                    print_status(f"⏳ Waiting for response from {author} (5 minutes timeout)", 'info')
-                                    break
-                                elif ai_response.startswith("Rate limit"):
-                                    ui_events.add("Rate limit hit; backing off")
-                                    await asyncio.sleep(5)
-                                else:
-                                    ui_events.add("AI error; retrying")
-                                    await asyncio.sleep(2)
-                                retry_count += 1
-                            except Exception:
-                                await asyncio.sleep(2)
-                                retry_count += 1
-                        if reply_sent:
-                            break
+                        else:
+                            # AI generation failed (internal API error or rate limit)
+                            ui_events.add(f"AI Error/Limit: {ai_response}")
+                            await asyncio.sleep(5) # Wait a bit before next attempt/channel switch
+                            
                 if reply_sent:
-                    break
+                    break # Break out of bucket processing if a reply was sent successfully
 
-            
-            # Update dashboard with context & stats
+            # Update dashboard and wait
             bot_dashboard.stats['active_conversations'] = len(smart_timer.active_conversations)
             bot_dashboard.set_context(channel_id, channel_id, CURRENT_MODE, CHANNEL_SLOW_MODES.get(channel_id, 5), CHANNEL_SLOW_MODES.get(channel_id, 5))
             bot_dashboard.display_dashboard()
             
-            # Wait before next refresh
-            await asyncio.sleep(CHANNEL_SLOW_MODES[channel_id])
-            
-            # Wait before next refresh with progress indicator
-            for i in range(CHANNEL_SLOW_MODES[channel_id], 0, -1):
+            # Wait for slow mode duration with progress indicator
+            slow_mode_time = CHANNEL_SLOW_MODES.get(channel_id, 5)
+            for i in range(slow_mode_time, 0, -1):
                 print(f"\r{Fore.CYAN}⏳ Refreshing in {i} seconds...{Style.RESET_ALL}", end='')
                 await asyncio.sleep(1)
-            print()  # New line after countdown
-        
+            print() # New line after countdown
+            
         except Exception as e:
-            print(f"⚠ Error: {e}")
-            await asyncio.sleep(10)  # Wait before retrying
+            print(f"⚠ Error in main loop: {e}")
+            error_handler.handle_error(e, "Main Loop", "selfbot")
+            await asyncio.sleep(10)
 
-asyncio.run(selfbot())
+if __name__ == "__main__":
+    asyncio.run(selfbot())
