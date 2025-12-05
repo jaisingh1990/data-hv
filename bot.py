@@ -296,12 +296,16 @@ def get_gemini_response(prompt, detected_lang, message_type='general'):
         if not ai_rate_limiter.can_make_request():
             return "Rate limit exceeded. Please try again later."
 
-        # === START MODIFICATION FOR ENGLISH-ONLY AND NO EMOJI ===
-        # 1. Force English language instruction regardless of detected_lang
+        # === START MODIFICATION FOR ENGLISH-ONLY AND NO EMOJI (REVISED) ===
+        # 1. Force English language instruction and persona
         lang_instructions = {
             'en': 'Reply only in English language with 1-2 friendly sentences. Do not use any emojis in the response.'
         }
-        # 2. Set detected_lang to 'en' to use the English-only instruction
+        
+        # 2. Add the Indian persona instruction here:
+        # NOTE: The main prompt must override the standard 'You are a helpful Discord user.' base identity
+        
+        # Set detected_lang to 'en' to use the English-only instruction
         detected_lang = 'en'
         
         # Original templates (we rely on the prompt to override them)
@@ -359,16 +363,19 @@ def get_gemini_response(prompt, detected_lang, message_type='general'):
         ]
         human_instruction = random.choice(human_variations)
         
-        # Build the final prompt with strict English-only instruction
-        full_prompt = f"{lang_instructions.get('en')}\n" \
+        # 🇮🇳 CONSTRUCT THE FINAL, OVERRIDING PROMPT HERE
+        base_identity = "You are a friendly, enthusiastic, and helpful human community member on Discord. You live in a major city in Maharashtra, India. Do not reveal that you are an AI model."
+        
+        full_prompt = f"{base_identity}\n" \
+                      f"{lang_instructions.get('en')}\n" \
                       f"{template}\n{human_instruction}\n\n{prompt}"
-        # === END MODIFICATION FOR ENGLISH-ONLY ===
+        # === END MODIFICATION FOR ENGLISH-ONLY AND PERSONA ===
         
         response = model.generate_content(full_prompt)
         response_text = response.text.strip()
         
         # === START MODIFICATION FOR EMOJI REMOVAL AND POST-PROCESSING ===
-        # Ensure no emojization happens by resetting the emoji-related post-processing.
+        # The following logic strips greetings, controls length, and ensures no emojis are returned.
         
         # Remove greeting openings (Original Logic)
         lowered = response_text.lower().lstrip()
@@ -389,8 +396,7 @@ def get_gemini_response(prompt, detected_lang, message_type='general'):
         if random.random() < 0.2:  # 20% chance
             response_text = response_text.replace('.', '...').replace('!', '!!')
             
-        # The entire logic for `emoji_count`, `get_random_emojis`, and emoji placement
-        # is effectively overridden by simply returning the response text here:
+        # The previous logic to place emojis is skipped by returning the text directly.
         return response_text
         # === END MODIFICATION FOR EMOJI REMOVAL ===
         
@@ -1287,7 +1293,6 @@ async def selfbot():
                     
                     # 1. Ignore the Bot's Own Messages (PREVENTS INFINITE LOOP)
                     if user_id == bot_user_id:
-                        # This should fix the issue if bot is replying to itself
                         continue
                         
                     # 2. Ignore Specific Users by ID or Username (INCLUDING YOURS)
@@ -1364,7 +1369,15 @@ async def selfbot():
                                 # We already enforce English-only reply in get_gemini_response
                                 detected_lang = detect_language(content) 
                                 prompt = f"You are a helpful Discord user. Reply to this message naturally and appropriately:\n{context}"
-                                ai_response = get_gemini_response(prompt, detected_lang, message_type)
+                                
+                                # 🇮🇳 NEW PROMPT: Use the Indian persona for the Gemini call
+                                base_identity = "You are a friendly, enthusiastic, and helpful human community member on Discord. You live in a major city in Maharashtra, India. Do not reveal that you are an AI model."
+                                
+                                full_prompt = f"{base_identity}\n" \
+                                              f"{lang_instructions.get('en')}\n" \
+                                              f"{template}\n{human_instruction}\n\n{prompt}"
+                                
+                                ai_response = model.generate_content(full_prompt)
                                 if ai_response and not ai_response.startswith(("AI Error", "Rate limit")):
                                     ui_events.add(f"Reply -> {author}")
                                     human_delay = random.randint(2, 8)
